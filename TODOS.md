@@ -4,13 +4,13 @@
 
 **What:** Check remaining KV write quota before each cron run. Warn (via `console_error!`) or skip remaining feeds if near the daily limit.
 
-**Why:** Free tier is 1000 KV writes/day. At 45 feeds × 12 runs/day = 552 writes, you have ~45% headroom now. If FEEDS grows past ~83 feeds or run frequency doubles, writes will silently fail — KV returns an error, feeds appear stale, no visible alert.
+**Why:** Free tier is 1000 KV writes/day. At 45 feeds + 1 meta write per run = 552 writes/day, you have ~45% headroom now. If FEEDS grows past ~82 feeds or run frequency doubles, writes will silently fail — KV returns an error, feeds appear stale, no visible alert.
 
 **Pros:** Prevents silent data loss when quota is exhausted. Turns a silent failure into a logged warning.
 
 **Cons:** Cloudflare KV does not expose remaining quota via the Workers API directly — this would require reading a counter from KV (`meta:write-count`) and incrementing it atomically (which KV doesn't support natively). Approximate only.
 
-**Context:** The simpler approach is a write-count accumulator: increment a counter in KV at the start of each run, check it before writing feeds. Not atomic (race possible if two runs overlap) but overlap is unlikely with 2h cron spacing. Alternatively, compute expected writes from `FEEDS.len()` and refuse if `FEEDS.len() * runs_per_day > 950`.
+**Context:** The simpler approach is a write-count accumulator: increment a counter in KV at the start of each run, check it before writing feeds. Not atomic (race possible if two runs overlap) but overlap is unlikely with 2h cron spacing. Alternatively, compute expected writes from `FEEDS.len() + 1` and refuse if `(FEEDS.len() + 1) * runs_per_day > 950`.
 
 **Depends on:** None. Standalone addition to the handler in `src/lib.rs`.
 

@@ -58,8 +58,8 @@ const FEEDS: &[&str] = &[
 | Key | Value | TTL |
 |-----|-------|-----|
 | `feed:{16 hex chars}` | `{"url":"...","fetched":"ISO8601","items":[...]}` | 24h |
-| `feed:{16 hex chars}` (error) | `{"error":"...","fetched":"ISO8601"}` | 1h |
-| `meta:last-run` | `{"ts":"ISO8601","success":N,"failed":N,"total":N}` | none |
+| `feed:{16 hex chars}` (error) | `{"error":"...","fetched":"ISO8601"}` | 4h |
+| `meta:last-run` | `{"ts":"ISO8601","success":N,"failed":N,"total":N}` | 4h |
 
 ## Running Tests
 
@@ -67,7 +67,7 @@ const FEEDS: &[&str] = &[
 # Unit tests (native x86_64, no WASM required)
 cargo test
 
-# Integration test (requires wrangler installed)
+# Manual scheduled-event smoke test (requires wrangler installed)
 wrangler dev --test-scheduled
 ```
 

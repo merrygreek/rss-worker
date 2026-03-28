@@ -7,7 +7,7 @@ mod types;
 #[cfg(target_arch = "wasm32")]
 use futures::future::join_all;
 #[cfg(target_arch = "wasm32")]
-use worker::{event, Env, ScheduledEvent, ScheduleContext};
+use worker::{event, Env, ScheduleContext, ScheduledEvent};
 
 #[cfg(target_arch = "wasm32")]
 use parser::parse_feed;
@@ -16,7 +16,8 @@ use storage::{store_feed, url_key};
 
 /// RSS feed URLs to fetch on each cron run.
 /// Hard limit: 45 (CF free tier allows 50 subrequests/invocation; leave 5 slack).
-/// KV budget: 45 feeds × 12 runs/day = 540 writes/day (limit: 1000/day).
+/// Baseline write budget: 45 feed writes + 1 meta write = 552 writes/day
+/// (limit: 1000/day, before any transient error-state rewrites).
 ///
 /// Phase 2: load this list from KV key "config:feeds" instead of hardcoding.
 #[cfg(target_arch = "wasm32")]
@@ -30,8 +31,7 @@ const FEEDS: &[&str] = &[
 async fn fetch_url(url: &str) -> Result<String, String> {
     // MVP: rely on CF Workers 30s platform timeout (no manual timeout).
     // Phase 2: race fetch against gloo-timers::TimeoutFuture for per-feed timeout.
-    let req =
-        worker::Request::new(url, worker::Method::Get).map_err(|e| e.to_string())?;
+    let req = worker::Request::new(url, worker::Method::Get).map_err(|e| e.to_string())?;
     let mut resp = worker::Fetch::Request(req)
         .send()
         .await
@@ -39,19 +39,14 @@ async fn fetch_url(url: &str) -> Result<String, String> {
     resp.text().await.map_err(|e| e.to_string())
 }
 
-/// Write a {error, fetched} JSON record to KV with a 1-hour TTL.
-/// Lets consumers distinguish "broken feed" from "never fetched."
+/// Write a {error, fetched} JSON record to KV with a 4-hour TTL.
+/// Lets consumers distinguish "broken feed" from "never fetched" between runs.
 #[cfg(target_arch = "wasm32")]
-async fn write_error_state(
-    kv: &worker::kv::KvStore,
-    url: &str,
-    error: &str,
-    timestamp: &str,
-) {
+async fn write_error_state(kv: &worker::kv::KvStore, url: &str, error: &str, timestamp: &str) {
     let v = serde_json::json!({"error": error, "fetched": timestamp}).to_string();
     match kv.put(&url_key(url), v) {
         Ok(b) => {
-            if let Err(e) = b.expiration_ttl(3600).execute().await {
+            if let Err(e) = b.expiration_ttl(14400).execute().await {
                 worker::console_error!("write_error_state execute failed for {}: {:?}", url, e);
             }
         }

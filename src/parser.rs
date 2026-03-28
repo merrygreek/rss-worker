@@ -19,7 +19,8 @@ enum Field {
 /// Design notes:
 ///   - Pull parser: no DOM tree, O(1) memory per event
 ///   - CDATA: handled via Event::CData (raw bytes, no XML unescaping)
-///   - Atom <link href="..." rel="alternate"/>: handled via Event::Empty
+///   - Atom <link href="..." rel="alternate"/>: handled for both
+///     self-closing tags and explicit <link></link> pairs
 ///   - depth tracks nesting inside item/entry; field tags only matched at depth 0
 ///     to prevent nested elements (e.g. <p> inside <description>) from corrupting
 ///     in_field. Text/CData resets in_field only when back at depth 0 (after End).
@@ -44,16 +45,21 @@ pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
             // Field start tags — only at depth 0 (directly inside item/entry).
             // Nested elements (e.g. <p> inside <description>) do not change in_field.
             Event::Start(ref e) => {
-                if current.is_some() {
+                if let Some(ref mut item) = current {
                     if depth == 0 {
-                        in_field = match e.name().as_ref() {
-                            b"title" => Some(Field::Title),
-                            b"link" if is_rss_link(e) => Some(Field::Link),
-                            b"pubDate" | b"published" | b"updated" => Some(Field::Date),
-                            b"description" | b"summary" | b"content" => Some(Field::Desc),
-                            b"guid" | b"id" => Some(Field::Guid),
-                            _ => None,
-                        };
+                        if e.name().as_ref() == b"link" && !is_rss_link(e) {
+                            apply_atom_link(item, e);
+                            in_field = None;
+                        } else {
+                            in_field = match e.name().as_ref() {
+                                b"title" => Some(Field::Title),
+                                b"link" if is_rss_link(e) => Some(Field::Link),
+                                b"pubDate" | b"published" | b"updated" => Some(Field::Date),
+                                b"description" | b"summary" | b"content" => Some(Field::Desc),
+                                b"guid" | b"id" => Some(Field::Guid),
+                                _ => None,
+                            };
+                        }
                     }
                     depth += 1;
                 }
@@ -62,20 +68,7 @@ pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
             // Atom <link href="..." rel="alternate"/> — self-closing, handled here
             Event::Empty(ref e) if e.name().as_ref() == b"link" => {
                 if let Some(ref mut item) = current {
-                    let mut href = String::new();
-                    let mut rel = String::new();
-                    for attr in e.attributes().flatten() {
-                        match attr.key.as_ref() {
-                            b"href" => {
-                                href = String::from_utf8_lossy(&attr.value).into_owned()
-                            }
-                            b"rel" => rel = String::from_utf8_lossy(&attr.value).into_owned(),
-                            _ => {}
-                        }
-                    }
-                    if !href.is_empty() && (rel.is_empty() || rel == "alternate") {
-                        item.link = href;
-                    }
+                    apply_atom_link(item, e);
                 }
             }
 
@@ -143,8 +136,25 @@ fn apply_field(item: &mut FeedItem, field: &Field, text: String) {
     }
 }
 
+fn apply_atom_link(item: &mut FeedItem, e: &quick_xml::events::BytesStart<'_>) {
+    let mut href = String::new();
+    let mut rel = String::new();
+
+    for attr in e.attributes().flatten() {
+        match attr.key.as_ref() {
+            b"href" => href = String::from_utf8_lossy(&attr.value).into_owned(),
+            b"rel" => rel = String::from_utf8_lossy(&attr.value).into_owned(),
+            _ => {}
+        }
+    }
+
+    if !href.is_empty() && (rel.is_empty() || rel == "alternate") {
+        item.link = href;
+    }
+}
+
 /// Returns true if this <link> start tag is RSS 2.0 style (text node follows).
-/// Returns false if it has an href attribute (Atom style, handled by Event::Empty).
+/// Returns false if it has an href attribute (Atom style, handled by apply_atom_link).
 pub(crate) fn is_rss_link(e: &quick_xml::events::BytesStart) -> bool {
     !e.attributes()
         .any(|a| a.map(|a| a.key.as_ref() == b"href").unwrap_or(false))
@@ -206,6 +216,22 @@ mod tests {
     }
 
     #[test]
+    fn test_atom_link_with_explicit_closing_tag() {
+        let xml = r#"<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Explicit Close</title>
+    <link href="https://atom.example.com/explicit" rel="alternate"></link>
+    <id>atom-id-2</id>
+  </entry>
+</feed>"#;
+        let items = parse_feed(xml).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].link, "https://atom.example.com/explicit");
+        assert_eq!(items[0].title, "Explicit Close");
+    }
+
+    #[test]
     fn test_cdata_description() {
         let xml = r#"<?xml version="1.0"?>
 <rss version="2.0"><channel>
@@ -261,7 +287,10 @@ mod tests {
     fn test_malformed_xml_returns_err() {
         // "<item" hits EOF in the middle of a tag — quick-xml returns UnexpectedEof
         let result = parse_feed("<item");
-        assert!(result.is_err(), "malformed XML should return Err, not panic");
+        assert!(
+            result.is_err(),
+            "malformed XML should return Err, not panic"
+        );
     }
 
     #[test]
@@ -296,7 +325,10 @@ mod tests {
         let items = parse_feed(xml).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].description, "Some text");
-        assert_eq!(items[0].guid, "correct-guid", "<p> inside description must not corrupt guid");
+        assert_eq!(
+            items[0].guid, "correct-guid",
+            "<p> inside description must not corrupt guid"
+        );
         assert_eq!(items[0].title, "Nested Test");
     }
 
@@ -311,7 +343,10 @@ mod tests {
   </item>
 </channel></rss>"#;
         let result = parse_feed(xml);
-        assert!(result.is_err(), "undefined entity reference should return Err, not silently produce empty field");
+        assert!(
+            result.is_err(),
+            "undefined entity reference should return Err, not silently produce empty field"
+        );
     }
 
     // --- is_rss_link tests ---

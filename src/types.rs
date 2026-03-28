@@ -10,6 +10,7 @@ pub struct FeedItem {
 }
 
 /// Write-only — never read back from KV, so no Deserialize.
+#[cfg(target_arch = "wasm32")]
 #[derive(Debug, Serialize)]
 pub struct StoredFeed<'a> {
     pub url: &'a str,

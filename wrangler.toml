@@ -4,7 +4,7 @@ compatibility_date = "2025-01-01"
 # Cron-only worker — no HTTP route, does not respond to fetch events
 
 [triggers]
-crons = ["0 */2 * * *"]   # every 2 hours — 45 feeds × 12 runs/day = 540 KV writes/day < 1000 limit
+crons = ["0 */2 * * *"]   # every 2 hours — baseline 552 writes/day including meta:last-run, still < 1000/day
 
 [[kv_namespaces]]
 binding = "RSS_STORE"

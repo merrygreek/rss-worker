@@ -1,6 +1,7 @@
 use fnv::FnvHasher;
 use std::hash::{Hash, Hasher};
 
+#[cfg(target_arch = "wasm32")]
 use crate::types::FeedItem;
 
 /// Deterministic KV key for a feed URL.
