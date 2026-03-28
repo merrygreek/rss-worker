@@ -2,6 +2,10 @@ mod parser;
 mod storage;
 mod types;
 
+/// TTL for error-state and run-metadata KV entries: 4h (2× the 2h cron interval).
+/// Feed data uses 24h TTL (see storage::store_feed).
+const SHORT_TTL_SECS: u64 = 14400;
+
 // All worker-specific code is wasm32-only.
 // cargo test runs on native (x86_64) and only compiles parser/storage pure functions.
 #[cfg(target_arch = "wasm32")]
@@ -46,7 +50,7 @@ async fn write_error_state(kv: &worker::kv::KvStore, url: &str, error: &str, tim
     let v = serde_json::json!({"error": error, "fetched": timestamp}).to_string();
     match kv.put(&url_key(url), v) {
         Ok(b) => {
-            if let Err(e) = b.expiration_ttl(14400).execute().await {
+            if let Err(e) = b.expiration_ttl(SHORT_TTL_SECS).execute().await {
                 worker::console_error!("write_error_state execute failed for {}: {:?}", url, e);
             }
         }
@@ -117,7 +121,7 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
     // expires and consumers can distinguish "stale/stopped" from "never run".
     match kv.put("meta:last-run", meta) {
         Ok(b) => {
-            if let Err(e) = b.expiration_ttl(14400).execute().await {
+            if let Err(e) = b.expiration_ttl(SHORT_TTL_SECS).execute().await {
                 worker::console_error!("meta:last-run write failed: {:?}", e);
             }
         }
