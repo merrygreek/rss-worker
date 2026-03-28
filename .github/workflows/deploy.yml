@@ -48,11 +48,12 @@ jobs:
 
       - name: Smoke test — trigger cron and verify KV write
         run: |
+          PRE_DEPLOY_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           sleep 10  # wait for deploy to propagate
-          # Trigger the scheduled event via CF API
+          # Trigger the scheduled event via CF API (fail loudly if the API call fails)
           curl -sf -X POST \
             "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CF_ACCOUNT_ID }}/workers/scripts/rss-worker/schedules" \
-            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" || true
+            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}"
           sleep 15  # wait for cron to run
           # Verify meta:last-run was written to KV
           RESULT=$(curl -sf \
@@ -60,3 +61,10 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}")
           echo "Last run metadata: $RESULT"
           echo "$RESULT" | grep -q '"success"' || { echo "ERROR: meta:last-run missing or malformed"; exit 1; }
+          # Freshness check: verify ts is from this run, not stale data from a prior deploy
+          RESULT_TS=$(echo "$RESULT" | grep -oE '"ts":"[^"]+"' | grep -oE '[0-9T:Z-]{20,}' | head -1)
+          if [ -n "$RESULT_TS" ] && [ "$RESULT_TS" \< "$PRE_DEPLOY_TS" ]; then
+            echo "ERROR: meta:last-run ts=$RESULT_TS predates this deploy ($PRE_DEPLOY_TS) — stale data"
+            exit 1
+          fi
+          echo "Freshness OK: $RESULT_TS >= $PRE_DEPLOY_TS"

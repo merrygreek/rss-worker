@@ -49,8 +49,15 @@ async fn write_error_state(
     timestamp: &str,
 ) {
     let v = serde_json::json!({"error": error, "fetched": timestamp}).to_string();
-    if let Ok(b) = kv.put(&url_key(url), v) {
-        let _ = b.expiration_ttl(3600).execute().await;
+    match kv.put(&url_key(url), v) {
+        Ok(b) => {
+            if let Err(e) = b.expiration_ttl(3600).execute().await {
+                worker::console_error!("write_error_state execute failed for {}: {:?}", url, e);
+            }
+        }
+        Err(e) => {
+            worker::console_error!("write_error_state put failed for {}: {:?}", url, e);
+        }
     }
 }
 
@@ -111,7 +118,16 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
     })
     .to_string();
 
-    if let Ok(b) = kv.put("meta:last-run", meta) {
-        let _ = b.execute().await;
+    // TTL = 4h (2× the cron interval). If the worker stops running, the key
+    // expires and consumers can distinguish "stale/stopped" from "never run".
+    match kv.put("meta:last-run", meta) {
+        Ok(b) => {
+            if let Err(e) = b.expiration_ttl(14400).execute().await {
+                worker::console_error!("meta:last-run write failed: {:?}", e);
+            }
+        }
+        Err(e) => {
+            worker::console_error!("meta:last-run put failed: {:?}", e);
+        }
     }
 }

@@ -14,13 +14,15 @@ enum Field {
 /// Parse RSS 2.0 or Atom 1.0 XML into a list of feed items.
 ///
 /// Items without a link are filtered out. Order matches document order.
-/// Returns Err on malformed XML. Never panics.
+/// Returns Err on malformed XML or unresolvable entity references. Never panics.
 ///
 /// Design notes:
 ///   - Pull parser: no DOM tree, O(1) memory per event
 ///   - CDATA: handled via Event::CData (raw bytes, no XML unescaping)
 ///   - Atom <link href="..." rel="alternate"/>: handled via Event::Empty
-///   - in_field resets after Text/CData (consumed) and on End events (left field)
+///   - depth tracks nesting inside item/entry; field tags only matched at depth 0
+///     to prevent nested elements (e.g. <p> inside <description>) from corrupting
+///     in_field. Text/CData resets in_field only when back at depth 0 (after End).
 pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -28,6 +30,7 @@ pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
     let mut items: Vec<FeedItem> = Vec::new();
     let mut current: Option<FeedItem> = None;
     let mut in_field: Option<Field> = None;
+    let mut depth: u32 = 0; // nesting depth inside current item/entry
 
     loop {
         match reader.read_event().map_err(|e| e.to_string())? {
@@ -35,19 +38,24 @@ pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
             Event::Start(ref e) if matches!(e.name().as_ref(), b"item" | b"entry") => {
                 current = Some(FeedItem::default());
                 in_field = None;
+                depth = 0;
             }
 
-            // Field start tags — set which field text goes into
+            // Field start tags — only at depth 0 (directly inside item/entry).
+            // Nested elements (e.g. <p> inside <description>) do not change in_field.
             Event::Start(ref e) => {
                 if current.is_some() {
-                    in_field = match e.name().as_ref() {
-                        b"title" => Some(Field::Title),
-                        b"link" if is_rss_link(e) => Some(Field::Link),
-                        b"pubDate" | b"published" | b"updated" => Some(Field::Date),
-                        b"description" | b"summary" | b"content" => Some(Field::Desc),
-                        b"guid" | b"id" => Some(Field::Guid),
-                        _ => None,
-                    };
+                    if depth == 0 {
+                        in_field = match e.name().as_ref() {
+                            b"title" => Some(Field::Title),
+                            b"link" if is_rss_link(e) => Some(Field::Link),
+                            b"pubDate" | b"published" | b"updated" => Some(Field::Date),
+                            b"description" | b"summary" | b"content" => Some(Field::Desc),
+                            b"guid" | b"id" => Some(Field::Guid),
+                            _ => None,
+                        };
+                    }
+                    depth += 1;
                 }
             }
 
@@ -71,13 +79,16 @@ pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
                 }
             }
 
-            // Plain text — apply to active field (e.g. RSS 2.0 <link>text</link>)
+            // Plain text — accumulate into active field across multiple Text events.
+            // in_field resets only when depth returns to 0 (on the matching End tag).
             Event::Text(ref e) => {
                 if let (Some(ref mut item), Some(ref field)) = (&mut current, &in_field) {
-                    let text = e.unescape().unwrap_or_default();
+                    let text = e.unescape().map_err(|e| e.to_string())?;
                     apply_field(item, field, text.into_owned());
                 }
-                in_field = None; // consumed
+                if depth == 0 {
+                    in_field = None;
+                }
             }
 
             // CDATA — raw bytes, no unescape (e.g. <description><![CDATA[<p>…</p>]]></description>)
@@ -86,7 +97,9 @@ pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
                     let text = String::from_utf8_lossy(e.as_ref()).into_owned();
                     apply_field(item, field, text);
                 }
-                in_field = None; // consumed
+                if depth == 0 {
+                    in_field = None;
+                }
             }
 
             // End of <item> or <entry> — commit item if it has a link
@@ -97,11 +110,17 @@ pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
                     }
                 }
                 in_field = None;
+                depth = 0;
             }
 
-            // Any other end tag — we left the field
+            // Any other end tag — decrement depth; reset in_field when back at item level
             Event::End(_) => {
-                in_field = None;
+                if depth > 0 {
+                    depth -= 1;
+                }
+                if depth == 0 {
+                    in_field = None;
+                }
             }
 
             Event::Eof => break,
@@ -113,12 +132,14 @@ pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
 }
 
 fn apply_field(item: &mut FeedItem, field: &Field, text: String) {
+    // push_str accumulates across multiple Text events for the same field
+    // (e.g. text nodes split by nested elements like <p>).
     match field {
-        Field::Title => item.title = text,
-        Field::Link => item.link = text,
-        Field::Date => item.pub_date = text,
-        Field::Desc => item.description = text,
-        Field::Guid => item.guid = text,
+        Field::Title => item.title.push_str(&text),
+        Field::Link => item.link.push_str(&text),
+        Field::Date => item.pub_date.push_str(&text),
+        Field::Desc => item.description.push_str(&text),
+        Field::Guid => item.guid.push_str(&text),
     }
 }
 
@@ -257,6 +278,40 @@ mod tests {
         assert_eq!(items.len(), 5);
         assert_eq!(items[0].title, "A");
         assert_eq!(items[4].title, "E");
+    }
+
+    #[test]
+    fn test_nested_html_in_description_does_not_corrupt_guid() {
+        // Real-world feeds sometimes put inline HTML in <description> without CDATA.
+        // The nested <p> tag must not reset in_field to something wrong.
+        let xml = r#"<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>Nested Test</title>
+    <link>https://example.com/nested</link>
+    <description><p>Some text</p></description>
+    <guid>correct-guid</guid>
+  </item>
+</channel></rss>"#;
+        let items = parse_feed(xml).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].description, "Some text");
+        assert_eq!(items[0].guid, "correct-guid", "<p> inside description must not corrupt guid");
+        assert_eq!(items[0].title, "Nested Test");
+    }
+
+    #[test]
+    fn test_bad_entity_reference_returns_err() {
+        // &nonexistent; is not a predefined XML entity — unescape() should fail.
+        let xml = r#"<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>Hello &nonexistent; World</title>
+    <link>https://example.com/bad-entity</link>
+  </item>
+</channel></rss>"#;
+        let result = parse_feed(xml);
+        assert!(result.is_err(), "undefined entity reference should return Err, not silently produce empty field");
     }
 
     // --- is_rss_link tests ---
