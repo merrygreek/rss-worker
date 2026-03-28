@@ -23,6 +23,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ### Changed
 - Track `Cargo.lock` for reproducible Rust dependency resolution and CI caching
 - Ignore generated `build/` and `target/` artifacts in Git
+- Pin `worker-build` to `0.1.14` so CI and local builds stay compatible with `worker-rs 0.4.0`
 
 ### Fixed
 - Valid Atom feeds that use `<link ...></link>` instead of self-closing `<link .../>` now keep their link URL
+- WASM KV writes now convert cleanly into `worker::Error`, allowing the `wasm32` build to compile

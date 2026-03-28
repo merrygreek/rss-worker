@@ -21,7 +21,7 @@ and stores structured JSON to KV.
 # Prerequisites
 rustup target add wasm32-unknown-unknown
 npm install -g wrangler
-cargo install worker-build
+cargo install worker-build --version 0.1.14 --force
 brew install binaryen  # for wasm-opt
 
 # Create KV namespace

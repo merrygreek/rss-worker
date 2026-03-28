@@ -17,7 +17,11 @@ fnv = "1.0"
 # WASM-only deps — not compiled on native, so cargo test works on x86_64
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 worker = "=0.4.0"
-js-sys = "0.3"
+# Keep the wasm-bindgen family aligned with worker-build 0.1.14.
+js-sys = "=0.3.82"
+wasm-bindgen = "=0.2.105"
+wasm-bindgen-futures = "=0.4.55"
+web-sys = "=0.3.82"
 
 [profile.release]
 opt-level = "z"       # smallest binary (more aggressive than "s")

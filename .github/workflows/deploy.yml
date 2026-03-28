@@ -33,7 +33,7 @@ jobs:
           wasm-opt --version
 
       - name: Install worker-build
-        run: cargo install worker-build
+        run: cargo install worker-build --version 0.1.14 --force
 
       - name: Build
         run: bash build.sh

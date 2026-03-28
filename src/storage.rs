@@ -37,7 +37,9 @@ pub async fn store_feed(
     kv.put(&url_key(url), value)?
         .expiration_ttl(86400) // 24h
         .execute()
-        .await
+        .await?;
+
+    Ok(())
 }
 
 #[cfg(test)]
