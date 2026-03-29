@@ -1,5 +1,5 @@
 name = "rss-worker"
-main = "build/worker.js"
+main = "build/worker/shim.mjs"
 compatibility_date = "2025-01-01"
 # Cron-only worker — no HTTP route, does not respond to fetch events
 
@@ -8,8 +8,8 @@ crons = ["0 */2 * * *"]   # every 2 hours — baseline 552 writes/day including 
 
 [[kv_namespaces]]
 binding = "RSS_STORE"
-id = "<your-kv-namespace-id>"           # wrangler kv:namespace create RSS_STORE
-preview_id = "<your-kv-namespace-id>"   # can reuse production namespace for dev
+id = "da5e9d580f0a4c27a51023c9ddfa69d1"
+preview_id = "da5e9d580f0a4c27a51023c9ddfa69d1"
 
 [build]
 command = "bash build.sh"
