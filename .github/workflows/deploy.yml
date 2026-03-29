@@ -50,21 +50,32 @@ jobs:
         run: |
           PRE_DEPLOY_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           sleep 10  # wait for deploy to propagate
-          # Trigger the scheduled event via CF API (fail loudly if the API call fails)
-          curl -sf -X POST \
+          # Temporarily set cron to every minute so it fires within the smoke test window.
+          # PUT /schedules replaces the schedule; we restore it at the end.
+          curl -sf -X PUT \
             "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CF_ACCOUNT_ID }}/workers/scripts/rss-worker/schedules" \
-            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}"
-          sleep 15  # wait for cron to run
+            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '[{"cron":"* * * * *"}]'
+          sleep 70  # wait for the 1-minute cron to fire
           # Verify meta:last-run was written to KV
           RESULT=$(curl -sf \
             "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CF_ACCOUNT_ID }}/storage/kv/namespaces/${{ secrets.KV_NAMESPACE_ID }}/values/meta:last-run" \
             -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}")
           echo "Last run metadata: $RESULT"
           echo "$RESULT" | grep -q '"success"' || { echo "ERROR: meta:last-run missing or malformed"; exit 1; }
-          # Freshness check: verify ts is from this run, not stale data from a prior deploy
-          RESULT_TS=$(echo "$RESULT" | grep -oE '"ts":"[^"]+"' | grep -oE '[0-9T:Z-]{20,}' | head -1)
+          # Freshness check: verify ts is from this run, not stale data from a prior deploy.
+          # CF timestamps include milliseconds (e.g. 2026-03-29T12:34:56.789Z) — include '.' in class.
+          RESULT_TS=$(echo "$RESULT" | grep -oE '"ts":"[^"]+"' | grep -oE '[0-9T:Z.+-]{20,}' | head -1)
           if [ -n "$RESULT_TS" ] && [ "$RESULT_TS" \< "$PRE_DEPLOY_TS" ]; then
             echo "ERROR: meta:last-run ts=$RESULT_TS predates this deploy ($PRE_DEPLOY_TS) — stale data"
             exit 1
           fi
           echo "Freshness OK: $RESULT_TS >= $PRE_DEPLOY_TS"
+          # Restore production schedule (every 2 hours)
+          curl -sf -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CF_ACCOUNT_ID }}/workers/scripts/rss-worker/schedules" \
+            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '[{"cron":"0 */2 * * *"}]'
+          echo "Schedule restored to 0 */2 * * *"
