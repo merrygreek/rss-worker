@@ -65,10 +65,14 @@ pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
                 }
             }
 
-            // Atom <link href="..." rel="alternate"/> — self-closing, handled here
+            // Atom <link href="..." rel="alternate"/> — self-closing, handled here.
+            // Only apply at depth 0 (directly inside <entry>) to avoid nested <link>
+            // elements (e.g. inside <content> or inline HTML) overwriting the real link.
             Event::Empty(ref e) if e.name().as_ref() == b"link" => {
                 if let Some(ref mut item) = current {
-                    apply_atom_link(item, e);
+                    if depth == 0 {
+                        apply_atom_link(item, e);
+                    }
                 }
             }
 
