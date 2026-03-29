@@ -142,7 +142,14 @@ fn apply_atom_link(item: &mut FeedItem, e: &quick_xml::events::BytesStart<'_>) {
 
     for attr in e.attributes().flatten() {
         match attr.key.as_ref() {
-            b"href" => href = String::from_utf8_lossy(&attr.value).into_owned(),
+            b"href" => {
+                // attr.value is already XML-unescaped by quick-xml's Attribute::value,
+                // so &amp; → & etc. Use unescaped_value() for the href to get clean URLs.
+                href = attr
+                    .unescape_value()
+                    .map(|v| v.into_owned())
+                    .unwrap_or_else(|_| String::from_utf8_lossy(&attr.value).into_owned());
+            }
             b"rel" => rel = String::from_utf8_lossy(&attr.value).into_owned(),
             _ => {}
         }
@@ -346,6 +353,26 @@ mod tests {
         assert!(
             result.is_err(),
             "undefined entity reference should return Err, not silently produce empty field"
+        );
+    }
+
+    #[test]
+    fn test_atom_link_href_entity_unescaping() {
+        // Atom hrefs may contain XML-escaped characters (e.g. &amp; in query strings).
+        // The stored link must use the decoded form so downstream fetches and deduplication work.
+        let xml = r#"<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Entity Test</title>
+    <link href="https://example.com/post?a=1&amp;b=2" rel="alternate"/>
+    <id>entity-id</id>
+  </entry>
+</feed>"#;
+        let items = parse_feed(xml).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].link, "https://example.com/post?a=1&b=2",
+            "&amp; in href must be decoded to & before storage"
         );
     }
 
