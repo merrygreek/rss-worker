@@ -35,8 +35,12 @@ pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
 
     loop {
         match reader.read_event().map_err(|e| e.to_string())? {
-            // RSS 2.0 <item> or Atom <entry> — start a new item
+            // RSS 2.0 <item> or Atom <entry> — start a new item.
+            // Cap at 500 items per feed to bound memory use from adversarial feeds.
             Event::Start(ref e) if matches!(e.name().as_ref(), b"item" | b"entry") => {
+                if items.len() >= 500 {
+                    break;
+                }
                 current = Some(FeedItem::default());
                 in_field = None;
                 depth = 0;
@@ -89,9 +93,11 @@ pub fn parse_feed(xml: &str) -> Result<Vec<FeedItem>, String> {
             }
 
             // CDATA — raw bytes, no unescape (e.g. <description><![CDATA[<p>…</p>]]></description>)
+            // Use from_utf8 (not lossy) so invalid byte sequences surface as Err rather than
+            // silently replacing bytes with U+FFFD and corrupting stored content.
             Event::CData(ref e) => {
                 if let (Some(ref mut item), Some(ref field)) = (&mut current, &in_field) {
-                    let text = String::from_utf8_lossy(e.as_ref()).into_owned();
+                    let text = String::from_utf8(e.as_ref().to_vec()).map_err(|e| e.to_string())?;
                     apply_field(item, field, text);
                 }
                 if depth == 0 {
