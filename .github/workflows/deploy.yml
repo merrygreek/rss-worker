@@ -1,0 +1,85 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install binaryen (pinned v117)
+        run: |
+          # Pin to v117 — newer versions have had miscompile issues with CF Workers
+          BINARYEN_VERSION=117
+          wget -q "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          tar -xzf "binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          sudo mv "binaryen-version_${BINARYEN_VERSION}/bin/"* /usr/local/bin/
+          wasm-opt --version
+
+      - name: Install worker-build
+        run: cargo install worker-build --version 0.1.14 --force
+
+      - name: Build
+        run: bash build.sh
+
+      - name: Run unit tests (native target)
+        run: cargo test
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+
+      - name: Smoke test — trigger cron and verify KV write
+        run: |
+          PRE_DEPLOY_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          sleep 10  # wait for deploy to propagate
+          # Temporarily set cron to every minute so it fires within the smoke test window.
+          # PUT /schedules replaces the schedule; restore_schedule() is registered as a trap
+          # so the production schedule is always restored even if the test fails or is cancelled.
+          restore_schedule() {
+            curl -sf -X PUT \
+              "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CF_ACCOUNT_ID }}/workers/scripts/rss-worker/schedules" \
+              -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              --data '[{"cron":"0 */2 * * *"}]' || true
+            echo "Schedule restored to 0 */2 * * *"
+          }
+          trap restore_schedule EXIT
+          curl -sf -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CF_ACCOUNT_ID }}/workers/scripts/rss-worker/schedules" \
+            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '[{"cron":"* * * * *"}]'
+          sleep 70  # wait for the 1-minute cron to fire
+          # Verify meta:last-run was written to KV
+          RESULT=$(curl -sf \
+            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CF_ACCOUNT_ID }}/storage/kv/namespaces/${{ secrets.KV_NAMESPACE_ID }}/values/meta:last-run" \
+            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}")
+          echo "Last run metadata: $RESULT"
+          echo "$RESULT" | grep -qE '"success":[0-9]+' || { echo "ERROR: meta:last-run missing or malformed"; exit 1; }
+          # Freshness check: verify ts is from this run, not stale data from a prior deploy.
+          # CF timestamps include milliseconds (e.g. 2026-03-29T12:34:56.789Z) — include '.' in class.
+          RESULT_TS=$(echo "$RESULT" | grep -oE '"ts":"[^"]+"' | grep -oE '[0-9T:Z.+-]{20,}' | head -1)
+          if [ -n "$RESULT_TS" ] && [ "$RESULT_TS" \< "$PRE_DEPLOY_TS" ]; then
+            echo "ERROR: meta:last-run ts=$RESULT_TS predates this deploy ($PRE_DEPLOY_TS) — stale data"
+            exit 1
+          fi
+          echo "Freshness OK: $RESULT_TS >= $PRE_DEPLOY_TS"
+          # restore_schedule() is called automatically via trap EXIT

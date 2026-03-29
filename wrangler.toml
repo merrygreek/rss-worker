@@ -1,0 +1,15 @@
+name = "rss-worker"
+main = "build/worker/shim.mjs"
+compatibility_date = "2025-01-01"
+# Cron-only worker — no HTTP route, does not respond to fetch events
+
+[triggers]
+crons = ["0 */2 * * *"]   # every 2 hours — baseline 552 writes/day including meta:last-run, still < 1000/day
+
+[[kv_namespaces]]
+binding = "RSS_STORE"
+id = "da5e9d580f0a4c27a51023c9ddfa69d1"
+preview_id = "da5e9d580f0a4c27a51023c9ddfa69d1"
+
+[build]
+command = "bash build.sh"

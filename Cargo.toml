@@ -1,0 +1,31 @@
+[package]
+name = "rss-worker"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Pure-Rust deps — compile on both native (cargo test) and wasm32
+quick-xml = { version = "0.36", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
+fnv = "1.0"
+
+# WASM-only deps — not compiled on native, so cargo test works on x86_64
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+worker = "=0.4.0"
+# Keep the wasm-bindgen family aligned with worker-build 0.1.14.
+js-sys = "=0.3.82"
+wasm-bindgen = "=0.2.105"
+wasm-bindgen-futures = "=0.4.55"
+web-sys = "=0.3.82"
+
+[profile.release]
+opt-level = "z"       # smallest binary (more aggressive than "s")
+lto = true            # link-time optimization — dead code removal across crates
+codegen-units = 1     # more thorough optimization
+panic = "abort"       # remove panic unwinding code
+strip = true          # strip symbol table
