@@ -8,10 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ### Fixed
 - Atom `<link href="...">` now stores the XML-unescaped URL (e.g. `&amp;` → `&`) so downstream HTTP fetches and deduplication work correctly
 - Self-closing Atom `<link/>` tags nested inside `<content>` or inline HTML no longer overwrite the entry's canonical link URL (depth guard added to `Event::Empty` branch)
-- CI smoke test now uses `PUT /schedules` with a 1-minute cron expression to actually trigger the worker, replacing a no-op call that never executed the handler
-- Smoke test timestamp regex extended to match Cloudflare millisecond timestamps (`2026-03-29T12:34:56.789Z`); previous pattern silently failed to extract the timestamp, defeating the freshness check
-- `trap restore_schedule EXIT` added to CI smoke test so the production `0 */2 * * *` cron is always restored even if the step fails or is cancelled
-- `SHORT_TTL_SECS` named constant extracted from magic number `14400` in `src/lib.rs`
+- CI smoke test now correctly triggers the worker via `PUT /schedules` with a 1-minute cron; the previous call was a no-op that never executed the handler
+- Smoke test freshness check now parses Cloudflare's millisecond timestamps (`2026-03-29T12:34:56.789Z`); the old regex silently dropped the timestamp, making the check always pass
+- `trap restore_schedule EXIT` guarantees the production `0 */2 * * *` cron is restored even if the smoke test step fails or is cancelled mid-run
+- `SHORT_TTL_SECS` named constant replaces magic number `14400` in `src/lib.rs`
 
 ## [0.1.0.0] - 2026-03-28
 
