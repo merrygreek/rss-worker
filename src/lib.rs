@@ -26,9 +26,55 @@ use storage::{store_feed, url_key};
 /// Phase 2: load this list from KV key "config:feeds" instead of hardcoding.
 #[cfg(target_arch = "wasm32")]
 const FEEDS: &[&str] = &[
-    // Add your RSS feed URLs here, one per line, max 45 total.
-    // "https://example.com/feed.xml",
-    // "https://blog.example.org/rss",
+    // AI & LLM (11)
+    "https://simonwillison.net/atom/everything/",
+    "https://openai.com/news/rss.xml",
+    "https://arxiv.org/rss/cs.AI",
+    "https://arxiv.org/rss/cs.LG",
+    "https://research.google/blog/rss/",
+    "https://deepmind.google/blog/rss.xml",
+    "https://lilianweng.github.io/lil-log/feed.xml",
+    "https://www.gwern.net/feed",
+    "https://garymarcus.substack.com/feed",
+    "https://minimaxir.com/index.xml",
+    "https://thesequence.substack.com/feed",
+    // Tech Blogs (25)
+    "https://www.jeffgeerling.com/blog.xml",
+    "https://www.seangoedecke.com/rss.xml",
+    "https://krebsonsecurity.com/feed/",
+    "https://daringfireball.net/feeds/main",
+    "https://ericmigi.com/rss.xml",
+    "https://idiallo.com/feed.rss",
+    "https://pluralistic.net/feed/",
+    "https://shkspr.mobi/blog/feed/",
+    "https://lcamtuf.substack.com/feed",
+    "https://mitchellh.com/feed.xml",
+    "https://dynomight.net/feed.xml",
+    "https://xeiaso.net/blog.rss",
+    "https://devblogs.microsoft.com/oldnewthing/feed",
+    "https://www.righto.com/feeds/posts/default",
+    "https://rachelbythebay.com/w/atom.xml",
+    "https://www.johndcook.com/blog/feed/",
+    "https://matklad.github.io/feed.xml",
+    "https://eli.thegreenplace.net/feeds/all.atom.xml",
+    "https://fabiensanglard.net/rss.xml",
+    "https://blog.miguelgrinberg.com/feed",
+    "https://www.troyhunt.com/rss/",
+    "https://anildash.com/feed.xml",
+    "https://computer.rip/rss.xml",
+    "https://www.tedunangst.com/flak/rss",
+    "https://steveblank.com/feed/",
+    // Startup & News (7)
+    "https://news.ycombinator.com/rss",
+    "https://www.techmeme.com/feed.xml",
+    "https://techcrunch.com/feed/",
+    "https://techcrunch.com/category/artificial-intelligence/feed/",
+    "https://techcrunch.com/tag/funding/feed/",
+    "https://venturebeat.com/feed/",
+    "https://venturebeat.com/category/ai/feed/",
+    // 中文 (2)
+    "https://www.ruanyifeng.com/blog/atom.xml",
+    "https://www.bestblogs.dev/zh/feeds/rss?category=ai&minScore=90",
 ];
 
 #[cfg(target_arch = "wasm32")]
